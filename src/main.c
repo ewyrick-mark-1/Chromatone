@@ -1,3 +1,4 @@
+// refactor_pico_fft.c
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -15,59 +16,52 @@
 
 // Configuration
 #define FFT_SIZE 1024
-#define SAMPLE_RATE 44100
+#define SAMPLE_RATE 44100.0f
 #define OVERLAP_PERCENT 30
 #define OVERLAP_SAMPLES ((FFT_SIZE * OVERLAP_PERCENT) / 100)
-#define STEP_SIZE (FFT_SIZE - OVERLAP_SAMPLES)  // 717 samples
+#define STEP_SIZE (FFT_SIZE - OVERLAP_SAMPLES)
 #define NUM_BANDS 32
-#define ADC_CHANNEL 5  // GPIO 45 = ADC channel 5 (RP2350)
+#define ADC_CHANNEL 5      // ADC input index
+#define ADC_GPIO_PIN 45    // explicit GPIO pin for ADC channel (use correct board pin)
 
-// Buffers
-uint16_t adc_buffer[FFT_SIZE * 2];  // Double buffer for DMA
-float fft_input[FFT_SIZE];
-float fft_real[FFT_SIZE];
-float fft_imag[FFT_SIZE];
-float magnitude[FFT_SIZE / 2];
-float bands[NUM_BANDS];
-char display_buffer[4096];  // Buffer for building output before printing
+// Buffers: ping-pong
+static uint16_t adc_buffer[2][FFT_SIZE];
+static volatile int filled_buffer_index = -1;      // -1 = none, 0 or 1 = newly filled
+static volatile bool buffer_ready = false;
 
-int dma_chan;
-volatile bool buffer_ready = false;
-volatile int current_write_pos = 0;
-volatile uint32_t dma_interrupt_count = 0;
+// FFT working buffers
+static float fft_input[FFT_SIZE];
+static float fft_real[FFT_SIZE];
+static float fft_imag[FFT_SIZE];
+static float magnitude[FFT_SIZE / 2];
+static float bands[NUM_BANDS];
 
-// Complex number structure
-typedef struct {
-    float real;
-    float imag;
-} Complex;
+static int dma_chan = -1;
+static volatile uint32_t dma_interrupt_count = 0;
 
-// FFT Implementation (Cooley-Tukey Radix-2 Decimation-In-Time)
+// ----- forward declarations -----
+void fft(float* real, float* imag, int n);
+void apply_hanning_window(float* data, int n);
+void calculate_magnitude(float* real, float* imag, float* mag, int n);
+void map_to_bands(float* mag, float* bands, int fft_size, int num_bands);
+void visualize_spectrum(float* bands, int num_bands);
+void process_audio_from_buffer(uint16_t *buf);
+void setup_adc_dma(void);
+void dma_handler(void);
+
+// ------------------ FFT (kept your implementation) ------------------
 void fft(float* real, float* imag, int n) {
-    // Bit reversal
     int j = 0;
     for (int i = 0; i < n - 1; i++) {
         if (i < j) {
-            // Swap real parts
-            float temp = real[i];
-            real[i] = real[j];
-            real[j] = temp;
-
-            // Swap imaginary parts
-            temp = imag[i];
-            imag[i] = imag[j];
-            imag[j] = temp;
+            float tmp = real[i]; real[i] = real[j]; real[j] = tmp;
+            tmp = imag[i]; imag[i] = imag[j]; imag[j] = tmp;
         }
-
         int k = n / 2;
-        while (k <= j) {
-            j -= k;
-            k /= 2;
-        }
+        while (k <= j) { j -= k; k /= 2; }
         j += k;
     }
 
-    // FFT computation
     for (int len = 2; len <= n; len *= 2) {
         float angle = -2.0f * M_PI / len;
         float wlen_real = cosf(angle);
@@ -76,11 +70,9 @@ void fft(float* real, float* imag, int n) {
         for (int i = 0; i < n; i += len) {
             float w_real = 1.0f;
             float w_imag = 0.0f;
-
             for (int j = 0; j < len / 2; j++) {
                 int idx1 = i + j;
                 int idx2 = i + j + len / 2;
-
                 float t_real = w_real * real[idx2] - w_imag * imag[idx2];
                 float t_imag = w_real * imag[idx2] + w_imag * real[idx2];
 
@@ -100,7 +92,7 @@ void fft(float* real, float* imag, int n) {
     }
 }
 
-// Hanning window function
+// ------------------ Window / mag / mapping / viz ------------------
 void apply_hanning_window(float* data, int n) {
     for (int i = 0; i < n; i++) {
         float window = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (n - 1)));
@@ -108,216 +100,200 @@ void apply_hanning_window(float* data, int n) {
     }
 }
 
-// Calculate magnitude spectrum
 void calculate_magnitude(float* real, float* imag, float* mag, int n) {
     for (int i = 0; i < n / 2; i++) {
         mag[i] = sqrtf(real[i] * real[i] + imag[i] * imag[i]);
     }
 }
 
-// Map FFT bins to frequency bands (2kHz - 20kHz)
-void map_to_bands(float* mag, float* bands, int fft_size, int num_bands) {
-    // Frequency per bin
-    float freq_per_bin = (float)SAMPLE_RATE / fft_size;
-
-    // Bin indices for 2kHz and 20kHz
+void map_to_bands(float* mag, float* out_bands, int fft_size, int num_bands) {
+    float freq_per_bin = SAMPLE_RATE / (float)fft_size;
     int bin_start = (int)(2000.0f / freq_per_bin);
     int bin_end = (int)(20000.0f / freq_per_bin);
-
-    if (bin_end > fft_size / 2) {
-        bin_end = fft_size / 2;
-    }
-
-    int bins_per_band = (bin_end - bin_start) / num_bands;
+    if (bin_end > fft_size / 2) bin_end = fft_size / 2;
+    int total_bins = bin_end - bin_start;
+    int bins_per_band = total_bins / num_bands;
     if (bins_per_band < 1) bins_per_band = 1;
 
-    // Average bins into bands
     for (int i = 0; i < num_bands; i++) {
         int start = bin_start + i * bins_per_band;
         int end = start + bins_per_band;
         if (end > bin_end) end = bin_end;
-
         float sum = 0.0f;
         int count = 0;
         for (int j = start; j < end; j++) {
             sum += mag[j];
             count++;
         }
-        bands[i] = (count > 0) ? (sum / count) : 0.0f;
+        out_bands[i] = (count > 0) ? (sum / (float)count) : 0.0f;
     }
 }
 
-// Visualize spectrum as simple digit string (0-9 representing amplitude)
 void visualize_spectrum(float* bands, int num_bands) {
-    // Find max value for normalization
     float max_val = 0.0f;
     for (int i = 0; i < num_bands; i++) {
-        if (bands[i] > max_val && !isnan(bands[i]) && !isinf(bands[i])) {
-            max_val = bands[i];
-        }
+        if (bands[i] > max_val && !isnan(bands[i]) && !isinf(bands[i])) max_val = bands[i];
     }
+    if (max_val < 1.0f) max_val = 1.0f;
 
-    if (max_val < 1.0f) max_val = 1.0f;  // Avoid division by zero
-
-    // Calculate frequency range per band: (20000 - 2000) / 32 = 562.5 Hz per band
     float freq_per_band = 18000.0f / num_bands;
-
-    // Print digits line with spacing (4 chars per value)
     for (int i = 0; i < num_bands; i++) {
-        float band_val = bands[i];
-        if (isnan(band_val) || isinf(band_val)) {
-            band_val = 0.0f;
-        }
-
-        float normalized = band_val / max_val;
+        float normalized = bands[i] / max_val;
         if (normalized < 0.0f) normalized = 0.0f;
         if (normalized > 1.0f) normalized = 1.0f;
-
-        int digit = (int)(normalized * 9.0f);  // Scale to 0-9
-        printf("%-4d", digit);  // 4 characters per digit
+        int digit = (int)(normalized * 9.0f);
+        printf("%-4d", digit);
     }
     printf("\n");
-
-    // Print frequency labels line
     for (int i = 0; i < num_bands; i++) {
         float freq_khz = (2000.0f + i * freq_per_band) / 1000.0f;
-        int freq = (int)freq_khz;
-        printf("%-4d", freq);  // 4 characters per frequency
+        printf("%-4d", (int)freq_khz);
     }
-    printf("\n\n");  // Extra newline for separation
-
+    printf("\n\n");
     fflush(stdout);
 }
 
-// DMA interrupt handler
+// ------------------ DMA interrupt handler (ping/pong) ------------------
 void dma_handler() {
-    dma_hw->ints0 = 1u << dma_chan;  // Clear interrupt
-    buffer_ready = true;
+    // acknowledge/clear interrupt for this channel
+    dma_hw->ints0 = 1u << dma_chan;
     dma_interrupt_count++;
+
+    // swap buffer index: figure which buffer was filled
+    // The DMA was configured to write FFT_SIZE samples, starting at whichever address we gave it.
+    // We track the write address externally via current buffer index; here we'll toggle.
+    static int next = 0;
+    filled_buffer_index = next;   // indicate which buffer is filled
+    next ^= 1;                    // toggle for next time
+    buffer_ready = true;
 }
 
-// Setup ADC with DMA
-void setup_adc_dma() {
-    // Initialize ADC
+// ------------------ ADC + DMA setup ------------------
+void setup_adc_dma(void) {
     adc_init();
-    adc_gpio_init(40 + ADC_CHANNEL);  // GPIO 40-47 = ADC0-7 on RP2350
+    adc_gpio_init(ADC_GPIO_PIN);
     adc_select_input(ADC_CHANNEL);
 
-    // Set up free-running mode
     adc_fifo_setup(
-        true,    // Enable FIFO
-        true,    // Enable DMA data request
-        1,       // Dreq threshold
-        false,   // No error bit
-        false    // Don't reduce to 8 bits
+        true,   // enable FIFO
+        true,   // enable DMA request (DREQ)
+        1,      // DREQ when >=1 sample in FIFO
+        false,  // don't set ERR bit
+        false   // no 8-bit conversion
     );
 
-    // Set sample rate to 44.1kHz
-    // ADC clock is 48MHz, divider = 48MHz / 44.1kHz = 1088
+    // set requested sample rate (SDK may clamp if impossible)
     adc_set_clkdiv(48000000.0f / SAMPLE_RATE);
 
-    // Set up DMA
+    // DMA config
     dma_chan = dma_claim_unused_channel(true);
     dma_channel_config cfg = dma_channel_get_default_config(dma_chan);
-
     channel_config_set_transfer_data_size(&cfg, DMA_SIZE_16);
-    channel_config_set_read_increment(&cfg, false);  // Always read from ADC FIFO
-    channel_config_set_write_increment(&cfg, true);   // Increment write address
-    channel_config_set_dreq(&cfg, DREQ_ADC);          // Pace by ADC
+    channel_config_set_read_increment(&cfg, false);  // read from ADC FIFO (no increment)
+    channel_config_set_write_increment(&cfg, true);  // write sequentially into buffer
+    channel_config_set_dreq(&cfg, DREQ_ADC);
 
+    // Initially point to buffer 0
     dma_channel_configure(
         dma_chan,
         &cfg,
-        adc_buffer,              // Write to buffer
-        &adc_hw->fifo,           // Read from ADC FIFO
-        FFT_SIZE,                // Transfer count
-        false                    // Don't start yet
+        adc_buffer[0],         // write address
+        &adc_hw->fifo,         // read from ADC FIFO
+        FFT_SIZE,              // transfer count
+        false                  // don't start yet
     );
 
-    // Enable DMA interrupt
+    // IRQ setup
     dma_channel_set_irq0_enabled(dma_chan, true);
     irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
     irq_set_enabled(DMA_IRQ_0, true);
 }
 
-// Process audio buffer
-void process_audio() {
-    // Copy ADC data to float buffer and normalize
-    // Remove DC offset by calculating mean first
-    float dc_offset = 0.0f;
-    for (int i = 0; i < FFT_SIZE; i++) {
-        dc_offset += adc_buffer[i];
-    }
-    dc_offset /= FFT_SIZE;
+// ------------------ Audio processing for one buffer ------------------
+void process_audio_from_buffer(uint16_t *buf) {
+    // compute DC offset
+    float dc = 0.0f;
+    for (int i = 0; i < FFT_SIZE; i++) dc += buf[i];
+    dc /= (float)FFT_SIZE;
 
-    // Convert to float and remove DC offset
+    // convert to floats and normalize to approx ±1.0 (12-bit)
+    float energy = 0.0f;
     for (int i = 0; i < FFT_SIZE; i++) {
-        fft_input[i] = (adc_buffer[i] - dc_offset) / 2048.0f;  // 12-bit ADC, remove DC
+        fft_input[i] = ((float)buf[i] - dc) / 2048.0f;
+        energy += fabsf(fft_input[i]);
     }
+    float avg_abs = energy / (float)FFT_SIZE;
 
-    // Apply Hanning window
+    // debug: print RMS/mean
+    float sum_sq = 0.0f;
+    for (int i = 0; i < FFT_SIZE; i++) sum_sq += fft_input[i] * fft_input[i];
+    float rms = sqrtf(sum_sq / (float)FFT_SIZE);
+    printf("RMS=%.6f avg=%.6f\n", rms, avg_abs);
+
+    // window and FFT
     apply_hanning_window(fft_input, FFT_SIZE);
-
-    // Copy to FFT buffers
     for (int i = 0; i < FFT_SIZE; i++) {
         fft_real[i] = fft_input[i];
         fft_imag[i] = 0.0f;
     }
-
-    // Perform FFT
     fft(fft_real, fft_imag, FFT_SIZE);
-
-    // Calculate magnitude
     calculate_magnitude(fft_real, fft_imag, magnitude, FFT_SIZE);
 
-    // Map to frequency bands
-    map_to_bands(magnitude, bands, FFT_SIZE, NUM_BANDS);
+    // find peak bin (debug)
+    float max_val = 0.0f;
+    int max_bin = 0;
+    for (int i = 0; i < FFT_SIZE/2; i++) {
+        if (magnitude[i] > max_val) {
+            max_val = magnitude[i];
+            max_bin = i;
+        }
+    }
+    float peak_freq = (float)max_bin * SAMPLE_RATE / (float)FFT_SIZE;
+    printf("Peak bin=%d freq=%.1fHz mag=%.6f\n", max_bin, peak_freq, max_val);
 
-    // Visualize
+    // map and visualize
+    map_to_bands(magnitude, bands, FFT_SIZE, NUM_BANDS);
     visualize_spectrum(bands, NUM_BANDS);
 }
 
+// ------------------ Main ------------------
 int main() {
-    // Set up LED for visual debugging
+    stdio_init_all();
+    sleep_ms(1000);
+
+    // LED heartbeat
     gpio_init(23);
     gpio_set_dir(23, GPIO_OUT);
     gpio_put(23, 1);
 
-    // Blink LED 3 times to show we're alive
-    for (int i = 0; i < 3; i++) {
-        gpio_put(23, 0);
-        sleep_ms(200);
-        gpio_put(23, 1);
-        sleep_ms(200);
-    }
-
-    stdio_init_all();
-    sleep_ms(3000);  // Longer wait for USB serial
-
-    // Send simple test message
-    printf("\n\n\n=== BOOT ===\n");
-    printf("TEST 1 2 3\n");
-    sleep_ms(100);
+    printf("\n=== BOOT ===\n");
 
     setup_adc_dma();
 
-    // Start ADC
+    // Start ADC and begin DMA into buffer 0
     adc_run(true);
-
-    // Start first DMA transfer
     dma_channel_start(dma_chan);
 
-    printf("Waiting for DMA interrupts...\n");
+    printf("Waiting for first DMA fill...\n");
 
-    while(1) {
+    while (1) {
         if (buffer_ready) {
+            // take ownership of the filled buffer
+            int bufid = filled_buffer_index;
             buffer_ready = false;
+            filled_buffer_index = -1;
 
-            // Process audio and run FFT
-            process_audio();
+            // process it
+            process_audio_from_buffer(adc_buffer[bufid]);
 
-            // Restart DMA
-            dma_channel_set_write_addr(dma_chan, adc_buffer, true);
+            // drain ADC FIFO before we reprogram DMA write address to avoid stale samples
+            adc_fifo_drain();
+
+            // reconfigure DMA to the other buffer for the next transfer
+            int next = bufid ^ 1;
+            dma_channel_set_write_addr(dma_chan, adc_buffer[next], true);
+
+            // continue loop; DMA will fill the "next" buffer and interrupt when done
         }
 
         tight_loop_contents();
