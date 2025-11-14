@@ -108,50 +108,85 @@ void calculate_magnitude(float* real, float* imag, float* mag, int n) {
 
 void map_to_bands(float* mag, float* out_bands, int fft_size, int num_bands) {
     float freq_per_bin = SAMPLE_RATE / (float)fft_size;
+
     int bin_start = (int)(2000.0f / freq_per_bin);
-    int bin_end = (int)(20000.0f / freq_per_bin);
-    if (bin_end > fft_size / 2) bin_end = fft_size / 2;
+    int bin_end   = (int)(20000.0f / freq_per_bin);
+
+    if (bin_end > fft_size / 2)
+        bin_end = fft_size / 2;
+
     int total_bins = bin_end - bin_start;
     int bins_per_band = total_bins / num_bands;
-    if (bins_per_band < 1) bins_per_band = 1;
+    if (bins_per_band < 1)
+        bins_per_band = 1;
 
     for (int i = 0; i < num_bands; i++) {
         int start = bin_start + i * bins_per_band;
-        int end = start + bins_per_band;
-        if (end > bin_end) end = bin_end;
-        float sum = 0.0f;
-        int count = 0;
+        int end   = start + bins_per_band;
+        if (end > bin_end)
+            end = bin_end;
+
+        float max_val = 0.0f;
+
         for (int j = start; j < end; j++) {
-            sum += mag[j];
-            count++;
+            float v = mag[j];
+            if (v > max_val)
+                max_val = v;
         }
-        out_bands[i] = (count > 0) ? (sum / (float)count) : 0.0f;
+
+        out_bands[i] = max_val;
     }
 }
 
+
 void visualize_spectrum(float* bands, int num_bands) {
     float max_val = 0.0f;
+
     for (int i = 0; i < num_bands; i++) {
-        if (bands[i] > max_val && !isnan(bands[i]) && !isinf(bands[i])) max_val = bands[i];
+        float v = bands[i];
+        if (!isnan(v) && !isinf(v) && v > max_val)
+            max_val = v;
     }
     if (max_val < 1.0f) max_val = 1.0f;
 
-    float freq_per_band = 18000.0f / num_bands;
+    // Move cursor up 2 lines and clear them
+    // (Skip this the first time — rely on static variable)
+    static bool first = true;
+    if (!first) {
+        printf("\033[2A");    // cursor up 2 lines
+        printf("\r\033[K");   // clear line
+        printf("\n\033[K");   // clear next line
+        printf("\r");         // back to start
+    }
+    first = false;
+
+    // ---------- LINE 1: Spectrum digits ----------
+    printf("\r");
     for (int i = 0; i < num_bands; i++) {
         float normalized = bands[i] / max_val;
         if (normalized < 0.0f) normalized = 0.0f;
         if (normalized > 1.0f) normalized = 1.0f;
+
         int digit = (int)(normalized * 9.0f);
-        printf("%-4d", digit);
+        if(digit > 0){ 
+            printf("\033[1;31m%-4d\033[0m|", digit); 
+        }else{ 
+            printf("%-4d|", digit); 
+        }
     }
     printf("\n");
+
+    // ---------- LINE 2: Frequency labels ----------
+    float freq_per_band = 18000.0f / num_bands;
+    printf("\r");
     for (int i = 0; i < num_bands; i++) {
         float freq_khz = (2000.0f + i * freq_per_band) / 1000.0f;
-        printf("%-4d", (int)freq_khz);
+        printf("%4.1f|", freq_khz);
     }
-    printf("\n\n");
+
     fflush(stdout);
 }
+
 
 // ------------------ DMA interrupt handler (ping/pong) ------------------
 void dma_handler() {
@@ -228,7 +263,7 @@ void process_audio_from_buffer(uint16_t *buf) {
     float sum_sq = 0.0f;
     for (int i = 0; i < FFT_SIZE; i++) sum_sq += fft_input[i] * fft_input[i];
     float rms = sqrtf(sum_sq / (float)FFT_SIZE);
-    printf("RMS=%.6f avg=%.6f\n", rms, avg_abs);
+    //printf("RMS=%.6f avg=%.6f\n", rms, avg_abs);
 
     // window and FFT
     apply_hanning_window(fft_input, FFT_SIZE);
@@ -249,7 +284,7 @@ void process_audio_from_buffer(uint16_t *buf) {
         }
     }
     float peak_freq = (float)max_bin * SAMPLE_RATE / (float)FFT_SIZE;
-    printf("Peak bin=%d freq=%.1fHz mag=%.6f\n", max_bin, peak_freq, max_val);
+    //printf("Peak bin=%d freq=%.1fHz mag=%.6f\n", max_bin, peak_freq, max_val);
 
     // map and visualize
     map_to_bands(magnitude, bands, FFT_SIZE, NUM_BANDS);
