@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 0)
+  (lib (name "Adafruit MAX4466 Mic Amp-eagle-import")(type "KiCad")(uri "${KIPRJMOD}/Adafruit MAX4466 Mic Amp-eagle-import.kicad_sym")(options "")(descr ""))
+)
