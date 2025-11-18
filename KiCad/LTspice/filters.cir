@@ -1,0 +1,44 @@
+* Multi-Filter Simulation: HPF, LPF, and Bandpass
+* AC analysis from 10Hz to 100kHz (log scale)
+.ac dec 100 10 100k
+.options abstol=1u reltol=0.01
+
+***************************
+* Low Pass Filter (LPF)
+***************************
+VLP vin_lpf 0 AC 1
+RLP vin_lpf vout_lpf 22k
+CLP vout_lpf 0 1n
+
+***************************
+* High Pass Filter (HPF)
+***************************
+VHP vin_hpf 0 AC 1
+CHP vin_hpf n1 1n
+RHP n1 0 11k
+* Output at node n1
+
+***************************
+* Bandpass Filter (HPF + Buffer + LPF)
+***************************
+VBP vin_bp 0 AC 1
+* HPF Stage
+CBP_HP vin_bp n2 1n
+RBP_HP n2 n3 22k
+
+* Ideal Buffer (Voltage Controlled Voltage Source)
+EBUF n4 0 n3 0 1
+
+* LPF Stage
+RBP_LP n4 n5 10.68k
+CBP_LP n5 0 1n
+
+***************************
+* Output Labels
+***************************
+.control
+run
+plot v(vout_lpf) v(n1) v(n5)
+.endc
+
+.end
