@@ -1,0 +1,15 @@
+LTspice 24.1.10 for Windows
+Circuit: C:\GITHUB\Chromatone\KiCad\LTspice\Draft2.net
+Start Time: Tue Nov 18 21:42:34 2025
+solver = Normal
+Maximum thread count: 8
+tnom = 27
+temp = 27
+method = trap
+Direct Newton iteration for .op point succeeded.
+Total elapsed time: 0.022 seconds.
+
+Files loaded:
+C:\GITHUB\Chromatone\KiCad\LTspice\Draft2.net
+C:\Users\diego\AppData\Local\LTspice\lib\sub\UniversalOpAmp1.lib
+
