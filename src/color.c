@@ -115,6 +115,13 @@ int get_note_index(float freq) {
     return note_num % 12;
 }
 
+float get_note_hue(int note_idx) {
+    if (note_idx < 0 || note_idx > 11) {
+        return 0.0f;  // Default to red for invalid index
+    }
+    return NOTE_HUES[note_idx];
+}
+
 void note_index_to_rgb(int note_idx, float magnitude, uint8_t* r, uint8_t* g, uint8_t* b) {
     if (note_idx < 0 || note_idx > 11) {
         // Invalid note - turn off LED

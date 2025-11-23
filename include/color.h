@@ -26,6 +26,9 @@ void hsv_to_rgb(float h, float s, float v, uint8_t* r, uint8_t* g, uint8_t* b);
 // C=0, C#=1, D=2, ... B=11
 int get_note_index(float freq);
 
+// Get the hue value (0-360) for a note index (0-11)
+float get_note_hue(int note_idx);
+
 // Convert note index to RGB color based on chromatic color wheel
 // note_idx: 0-11 (C through B)
 // magnitude: used to scale brightness (0.0-1.0 normalized)

@@ -8,6 +8,11 @@
 #define MIN_FREQ 27.0f
 #define MAX_FREQ 8000.0f
 
+// Color inertia settings
+#define HUE_SMOOTHING 0.15f  // 0.0-1.0: lower = smoother/slower, higher = snappier
+static float current_hue = 0.0f;
+static bool hue_initialized = false;
+
 void visualize_spectrum(float* bands, int num_bands) {
     float max_val = 0.0f;
 
@@ -83,8 +88,10 @@ void visualize_notes(detected_note_t* notes, int num_notes) {
             total_magnitude += notes[i].magnitude;
         }
 
-        // Blend colors weighted by magnitude
-        float r_blend = 0.0f, g_blend = 0.0f, b_blend = 0.0f;
+        // Circular weighted average of hues using vector math
+        // Convert each hue to unit vector, weight by magnitude, sum, then convert back
+        float sum_x = 0.0f, sum_y = 0.0f;
+        const float deg_to_rad = M_PI / 180.0f;
 
         for (int i = 0; i < num_notes; i++) {
             // Get note index for color mapping
@@ -96,22 +103,44 @@ void visualize_notes(detected_note_t* notes, int num_notes) {
                 printf(", ");
             }
 
-            // Get RGB for this note and blend by weight
+            // Add weighted hue vector component
             if (note_idx >= 0 && total_magnitude > 0.0f) {
-                uint8_t nr, ng, nb;
-                note_index_to_rgb(note_idx, 1.0f, &nr, &ng, &nb);
-
+                float hue = get_note_hue(note_idx);
                 float weight = notes[i].magnitude / total_magnitude;
-                r_blend += nr * weight;
-                g_blend += ng * weight;
-                b_blend += nb * weight;
+
+                // Convert hue to unit vector and weight
+                sum_x += cosf(hue * deg_to_rad) * weight;
+                sum_y += sinf(hue * deg_to_rad) * weight;
             }
         }
 
-        // Convert blended values to uint8
-        r = (uint8_t)(r_blend > 255.0f ? 255.0f : r_blend);
-        g = (uint8_t)(g_blend > 255.0f ? 255.0f : g_blend);
-        b = (uint8_t)(b_blend > 255.0f ? 255.0f : b_blend);
+        // Convert summed vector back to hue angle (this is our target hue)
+        float target_hue = atan2f(sum_y, sum_x) * (180.0f / M_PI);
+        if (target_hue < 0.0f) {
+            target_hue += 360.0f;
+        }
+
+        // Apply color inertia using circular interpolation
+        if (!hue_initialized) {
+            // First time: jump directly to target
+            current_hue = target_hue;
+            hue_initialized = true;
+        } else {
+            // Calculate shortest angular distance (handles wraparound)
+            float diff = target_hue - current_hue;
+            while (diff > 180.0f) diff -= 360.0f;
+            while (diff < -180.0f) diff += 360.0f;
+
+            // Apply smoothing
+            current_hue += diff * HUE_SMOOTHING;
+
+            // Keep in [0, 360) range
+            while (current_hue >= 360.0f) current_hue -= 360.0f;
+            while (current_hue < 0.0f) current_hue += 360.0f;
+        }
+
+        // Convert to RGB with full saturation and brightness
+        hsv_to_rgb(current_hue, 1.0f, 1.0f, &r, &g, &b);
 
         set_rgb_pwm(r, g, b);
 
