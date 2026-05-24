@@ -44,10 +44,10 @@ void setup_rgb_pwm(void) {
     pwm_set_wrap(slice_g, PWM_WRAP);
     pwm_set_wrap(slice_b, PWM_WRAP);
 
-    // Set initial duty cycle to OFF (common anode: HIGH = off)
-    pwm_set_gpio_level(PWM_R_PIN, PWM_WRAP);
-    pwm_set_gpio_level(PWM_G_PIN, PWM_WRAP);
-    pwm_set_gpio_level(PWM_B_PIN, PWM_WRAP);
+    // Set initial duty cycle to OFF (LOW gate = NMOS off = LED off)
+    pwm_set_gpio_level(PWM_R_PIN, 0);
+    pwm_set_gpio_level(PWM_G_PIN, 0);
+    pwm_set_gpio_level(PWM_B_PIN, 0);
 
     // Enable PWM slices
     pwm_set_enabled(slice_r, true);
@@ -56,10 +56,11 @@ void setup_rgb_pwm(void) {
 }
 
 void set_rgb_pwm(uint8_t r, uint8_t g, uint8_t b) {
-    // Common anode LED: invert values (HIGH = off, LOW = on)
-    pwm_set_gpio_level(PWM_R_PIN, PWM_WRAP - r);
-    pwm_set_gpio_level(PWM_G_PIN, PWM_WRAP - g);
-    pwm_set_gpio_level(PWM_B_PIN, PWM_WRAP - b);
+    // Common anode + NMOS: Inverted logic
+    // Higher RGB values = lower duty cycle to cathode = brighter LED
+    pwm_set_gpio_level(PWM_R_PIN, r);
+    pwm_set_gpio_level(PWM_G_PIN,  g);
+    pwm_set_gpio_level(PWM_B_PIN,  b);
 }
 
 void hsv_to_rgb(float h, float s, float v, uint8_t* r, uint8_t* g, uint8_t* b) {

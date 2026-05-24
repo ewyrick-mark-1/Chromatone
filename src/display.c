@@ -3,6 +3,12 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <math.h>
+#include "hardware/pwm.h"
+
+// Define M_PI if not already defined
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // External constants from main.c (needed for frequency labels)
 #define MIN_FREQ 27.0f
@@ -77,8 +83,10 @@ void visualize_notes(detected_note_t* notes, int num_notes) {
 
     if (num_notes == 0) {
         printf("Notes: (none detected)");
-        // Turn off LED when no notes detected
-        set_rgb_pwm(0, 0, 0);
+        // Turn off LED when no notes detected - set outputs LOW (0) to turn off NMOS
+        pwm_set_gpio_level(PWM_R_PIN, 0);
+        pwm_set_gpio_level(PWM_G_PIN, 0);
+        pwm_set_gpio_level(PWM_B_PIN, 0);
     } else {
         printf("Notes: ");
 

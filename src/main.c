@@ -22,7 +22,7 @@
 #define NUM_BANDS 32
 #define OVERLAP_PERCENT 50
 #define STEP_SIZE (FFT_SIZE * (100 - OVERLAP_PERCENT) / 100)  // 50% overlap = 8192 step
-#define NOISE_FLOOR_THRESHOLD 3.0f  // Ignore FFT magnitudes below this value
+#define NOISE_FLOOR_THRESHOLD 10.0f  // Ignore FFT magnitudes below this value
 
 // Single-channel configuration for instrument range
 #define SAMPLE_RATE 20000.0f
@@ -201,7 +201,7 @@ void freq_to_note(float freq, char* note_str) {
 // Find peaks in FFT magnitude array and convert to notes
 int find_peaks(detected_note_t* notes, int max_notes) {
     int num_notes = 0;
-    float threshold = 50.0f; // Minimum magnitude to consider as peak
+    float threshold = 100.0f; // Minimum magnitude to consider as peak
     float freq_per_bin = SAMPLE_RATE / (float)FFT_SIZE;
 
     // Scan through FFT bins looking for local maxima

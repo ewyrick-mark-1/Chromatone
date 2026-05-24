@@ -3,10 +3,10 @@
 
 #include <stdint.h>
 
-// PWM pin definitions for RGB LED (R and B swapped for hardware wiring)
-#define PWM_R_PIN 39
-#define PWM_G_PIN 38
-#define PWM_B_PIN 37
+// PWM pin definitions for RGB LED (matched to physical wiring)
+#define PWM_R_PIN 38  // GPIO 37 → Physical RED LED
+#define PWM_G_PIN 37  // GPIO 38 → Physical GREEN LED
+#define PWM_B_PIN 39  // GPIO 39 → Physical BLUE LED
 
 // PWM resolution (8-bit = 0-255)
 #define PWM_WRAP 255
