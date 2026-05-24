@@ -71,7 +71,7 @@ void dma_handler(void);
 void setup_adc_dma(void);
 void process_fft_buffer(uint16_t* buffer);
 
-// ------------------ FFT (kept your implementation) ------------------
+// ------------------ FFT ------------------
 void fft(float* real, float* imag, int n) {
     int j = 0;
     for (int i = 0; i < n - 1; i++) {
