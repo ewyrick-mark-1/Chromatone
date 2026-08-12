@@ -4,7 +4,7 @@
 
 ## Overview
 
-Chromatone is an embedded audio visualizer running on the Raspberry Pi Pico. It samples audio through the ADC, performs a real-time FFT, detects musical notes, and drives an RGB LED output based on the results.
+Chromatone is an embedded audio visualizer running on the Raspberry Pi RP2350. It samples audio through the ADC, performs a real-time FFT, detects musical notes, and drives an RGB LED output based on the results.
 
 ## [Demo video:](https://youtu.be/pOVmz1aZbJg)
 
@@ -13,7 +13,7 @@ Chromatone is an embedded audio visualizer running on the Raspberry Pi Pico. It 
 
 ## Hardware
 
-- **MCU:** Raspberry Pi Pico (overclocked to 300 MHz)
+- **MCU:** Raspberry Pi RP2350 (overclocked to 300 MHz)
 - **Input:** Analog microphone on ADC channel 0 (GPIO 40)
 - **Output:** RGB LED via PWM on GPIO 37–39
 - **Schematics/PCB:** KiCad project files located in `KiCad/`
